@@ -13,15 +13,14 @@ import time
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset,Subset
 from tqdm import tqdm, trange
-
-# from model.utils import TaskType
-from _arguments import get_args
-from distance import  KL_divergence, calculate_group_to_one_relative_distance_asymmetric, JS_divergence
+from arguments import get_args
+from distance import  calculate_group_to_one_relative_distance_asymmetric, JS_divergence
 
 from transformers import (
     AdamW,
     AutoConfig,
     AutoModelWithLMHead,
+    AutoModelForPreTraining,
     BertForPreTraining,
     AutoTokenizer,
     PreTrainedModel,
@@ -67,7 +66,6 @@ def split_data(attributes_examples_, neutral_examples, args):
     data={'train':{'example':{'attribute0':[],'attribute1':[],'weight':[],'neutral':[]}},'dev':{'example':{'attribute0':[],'attribute1':[],'weight':[]},'neutral':[]}}
  
     for i, examples in enumerate(attributes_examples):
-        print(i)
         idx_l = list(range(len(examples)))
         examples_neighbors=attributes_examples_neighbor[i]
         examples = [examples[idx] for idx in idx_l]
@@ -158,7 +156,6 @@ def get_data2(datafile2,tokenizer):
             data["token1"].append(embed_)
     return data
 
-
 def set_seed(args):
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -169,7 +166,6 @@ def set_seed(args):
 def chunck_knn(datasets):
     new_knn_datasets = []
     new_datasets_weights = []
-
     for neighbors in datasets:
         real_neighbor = [neighbor for neighbor in neighbors if neighbor is not None]
         weight = [(1 - 0.7) / len(real_neighbor)] * len(real_neighbor)
@@ -184,7 +180,6 @@ def create_dataloader(args, datasets, tokenizer, train=False):
         for example in padded_examples:
             mask_idx=torch.where(example==tokenizer.mask_token_id)[0]
             mask_idxs.append(mask_idx)
-
         examples_mask_index=torch.stack(mask_idxs)
         examples_mask_index=torch.squeeze(examples_mask_index,dim=1)
         examples_attention_mask = torch.zeros_like(padded_examples, dtype=torch.int32)
@@ -192,7 +187,6 @@ def create_dataloader(args, datasets, tokenizer, train=False):
         token_type_ids = torch.zeros_like(padded_examples, dtype=torch.int32)
         # Find indices where padded_examples is not equal to pad_token_id
         non_pad_indices = torch.where(padded_examples != tokenizer.pad_token_id)
-
         # Set token_type_ids to 1 at non-pad indices
         token_type_ids[non_pad_indices] = 1
 
@@ -201,7 +195,6 @@ def create_dataloader(args, datasets, tokenizer, train=False):
     dataloaders = {}
     example_num = 0
     data_distribution = []
-
     train_batch_size_={'attribute0':8,'token0':32}
     eval_batch_size_={'attribute0':8,'token0':32}
 
@@ -330,7 +323,6 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
         original_model = torch.nn.parallel.DistributedDataParallel(
             original_model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
   
-
     # Train!
     logger.info("***** Running training *****")
     logger.info("Num examples = %d", train_example_num)
@@ -358,8 +350,6 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
             logger.info("Will skip the first %d steps in the first epoch", steps_trained_in_current_epoch)
         except ValueError:
             logger.info("Starting fine-tuning.")
-
-
     model.zero_grad()
     original_model.zero_grad()
 
@@ -403,21 +393,16 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
 
     def get_hiddens_of_model(input, input_attention_mask):
         model.zero_grad()
-        if args.model_type == 'roberta':
-            if args.algorithm == 'ADEPT':
-                hiddens = model(input, input_attention_mask).hidden_states
-            elif args.algorithm == 'ADEPT-finetuning' or args.algorithm == 'DPCE':
-                hiddens = model.roberta(input).hidden_states
-        elif args.model_type == 'bert':
-            if args.algorithm == 'ADEPT':
-                #hiddens = model(input, input_attention_mask).hidden_states
-                hiddens =model(input).hidden_states
-            elif args.algorithm == 'ADEPT-finetuning' or args.algorithm == 'DPCE':
-                hiddens =model.bert(input).hidden_states
+        if args.model_type == 'bert':
+            hiddens =model.bert(input).hidden_states
+        elif args.model_type == 'roberta':
+            hiddens = model.roberta(input).hidden_states
+        elif args.model_type == 'albert':
+            hiddens =model.albert(input).hidden_states
         return hiddens
     
     def attribute_vector_example():
-        if args.bias == 'gender':
+        if args.bias == 'gender' or args.bias == 'race':
             d = 2
         elif args.bias == 'religion':
             d = 3
@@ -437,11 +422,12 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
                 weights.append(next(dataloaders[key]))
         weights=torch.cat(weights)
         attribute_size = len(data['train']['example'])
-        for i in range(2):
+        for i in range(d):
             expanded_weights = weights.unsqueeze(-1).unsqueeze(-1).to(args.device)
             weighted_attributes = torch.cat(attributes_hiddens[f'attribute{i}'],0) * expanded_weights
             weighted_sum = torch.sum(weighted_attributes, dim=0)
             sum_of_weights = torch.sum(expanded_weights, dim=0)
+
             weighted_average = weighted_sum / sum_of_weights   
             attributes_hiddens[f'attribute{i}'] = weighted_average.detach().unsqueeze(0)
         return attributes_hiddens
@@ -468,7 +454,7 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
                 tar_predictions_logits[key] = tar_predictions.prediction_logits[torch.arange(tar_predictions.prediction_logits.size(0)), inputs_mask_id]
             tar1_predictions_logits,tar2_predictions_logits=tar_predictions_logits["token0"],tar_predictions_logits["token1"]
             loss = jsd_model(tar1_predictions_logits,tar2_predictions_logits)
-            loss=loss*args.alpha
+            loss=loss*args.beta
    
         elif 'neutral'==data_key:
             inputs = next(dataloaders["neutral"])
@@ -489,6 +475,7 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
                 attributes_hiddens = {key: value[:,idx,:].unsqueeze(1) for key, value in attributes_hiddens.items()}
             if args.loss_target == 'sentence':
                 attributes_hiddens = {key: value.unsqueeze(1) for key, value in attributes_hiddens.items()}
+            #elif args.loss_target == 'token' and key == 'neutral':
             elif args.loss_target == 'token':
                 target_layer_hiddens = torch.mean(target_layer_hiddens, 1).unsqueeze(1)
   
@@ -499,7 +486,7 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
                 for j in range(i + 1, relative_distance_shape0):
                     loss += JS_divergence(relative_distance[i], relative_distance[j])
             loss /= relative_distance_shape0 * (relative_distance_shape0 - 1) / 2
-            loss=loss*args.beta
+            loss=loss*args.alpha
         else:
             inputs = next(dataloaders[data_key])
             inputs,token_type_ids, inputs_attention_mask,inputs_mask_ids = inputs
@@ -519,8 +506,7 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
 
         if args.local_rank in [-1, 0]:
             os.makedirs(eval_output_dir, exist_ok=True)
-        eval_batch_size=8
-
+        # Note that DistributedSampler samples randomly
         # multi-gpu evaluate
         if args.n_gpu > 1:
             model = torch.nn.DataParallel(model)
@@ -528,9 +514,9 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
         # Eval!
         logger.info("***** Running evaluation {} *****".format(prefix))
         logger.info("Num examples = %d", dev_example_num)
-        logger.info("Batch size = %d", eval_batch_size)
         eval_loss = 0.0
         model.eval()
+        #criterion.eval()
 
         for data_key in tqdm(dev_distribution):
             if data_key=='weight':
@@ -544,12 +530,7 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
         return eval_loss
 
     criterion_ms = mean_square
-    criterion_ip = inner_product
-
-
-    # alpha = float(args.alpha)
-    # beta = float(args.beta)
-
+    #criterion_ip = inner_product
     train_loss = 0.0
     jsd_model = JSD()
 
@@ -568,7 +549,6 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
             if data_key=='token1':
                 continue
             model.train()
-
             # Skip past any already trained steps if resuming training
             if steps_trained_in_current_epoch > 0:
                 steps_trained_in_current_epoch -= 1
@@ -579,7 +559,6 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
-
             if args.fp16:
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
@@ -587,7 +566,6 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
                 loss.backward()
 
             train_loss += loss.item()
-            train_loss_=train_loss
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
@@ -623,7 +601,6 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
 
 def main():
     model_args, args = get_args()
-
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -694,8 +671,8 @@ def main():
             args.block_size = min(args.block_size, tokenizer.max_len)
 
     if model_args.model_name_or_path:
-        model =BertForPreTraining.from_pretrained(args.model_name_or_path, output_hidden_states=True)
-        original_model =BertForPreTraining.from_pretrained(args.model_name_or_path, output_hidden_states=True)
+        model =AutoModelForPreTraining.from_pretrained(args.model_name_or_path, output_hidden_states=True)
+        original_model =AutoModelForPreTraining.from_pretrained(args.model_name_or_path, output_hidden_states=True)
     
     else:
         raise ValueError()
@@ -727,7 +704,6 @@ def main():
 
     datasets1 = fload_and_cache_examples(splited_data, args, tokenizer)
     datasets2 = fload_and_cache_examples(splited_data2, args, tokenizer)
-
     datasets = {
     "train": {
         "attribute0": datasets1["train"]["attribute0"],

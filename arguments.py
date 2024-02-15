@@ -10,7 +10,6 @@ class ModelArguments:
     """
     model_name_or_path: str = field(
         default="bert-base-uncased",
-
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
     config_name: Optional[str] = field(
@@ -44,7 +43,7 @@ class OtherArguments:
     bias: str = field(
         default="gender",
         metadata={"help": "Bias type.",
-        "choices": ["gender", "race"]}
+        "choices": ["gender", "race","religion"]}
     )
     data_file: str = field(
         default="data/train_data/data.bin",
@@ -56,13 +55,15 @@ class OtherArguments:
     )
     model_type: str = field(
         default="bert",
-        metadata={"help": "The model architecture to be trained or fine-tuned.Choose from ['bert','roberta','albert']"},
+        metadata={"help": "Choose from ['bert','roberta','albert']"}
     )
     alpha:float =field(
         default=0.3,
+        metadata={"help": "Weight of Loss Function 1"}
     )
     beta:float =field(
         default=0.7,
+        metadata={"help": "Weight of Loss Function 2"}
     )
 
     block_size: int = field(
@@ -80,23 +81,14 @@ class OtherArguments:
         metadata={"help": "Debias the first, last or all layers of a PLM.",
         "choices": ['all', 'first', 'last']}
     )
-    perplexity: int = field(
-        default=15,
-        metadata={"help":"Set perplecity (hyperparameter)."}
-    )
-    KL_divergence: bool = field(
-        default=False,
-        metadata={
-            "help": "Will use KL divergence to measure output change."
-        },
-    )
 
 def get_args():
-    #"output_dir" is modified in the TrainingArguments to change the default value.
+    #Modify the default value of output_dir in TrainingArguments
     parser = HfArgumentParser((ModelArguments, TrainingArguments, OtherArguments))
     model_args, training_args, other_args = parser.parse_args_into_dataclasses()
     args = argparse.Namespace(**vars(training_args), **vars(other_args))
     args.model_name_or_path = model_args.model_name_or_path
+
     if (
         os.path.exists(args.output_dir)
         and os.listdir(args.output_dir)
@@ -114,4 +106,3 @@ if __name__ == "__main__":
     model_args, args=get_args()
     # print(args.model_type)
     # print(args.alpha,args.beta)
-    # print(args.per_device_train_batch_size)
