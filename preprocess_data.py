@@ -5,6 +5,12 @@ import torch
 from tqdm import tqdm
 import time
 import argparse
+import json
+import faiss
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+import pickle
+
 
  
 parser = argparse.ArgumentParser()
@@ -37,16 +43,6 @@ parser.add_argument(
     type=int,
     help="batch size of the data fed into the model",
 )
-
-# -*- coding: utf - 8 -*-
-
-import json
-import faiss
-import numpy as np
-from tqdm import tqdm
-from sklearn.metrics.pairwise import cosine_similarity
-import pickle
-
 
 def KNN_split(embeddings_file):
     """
@@ -194,7 +190,6 @@ if __name__ == "__main__":
                 sentence_embedding = outputs.last_hidden_state[i, 0, :].numpy()  
                 emb_file.write(' '.join(str(x) for x in sentence_embedding) + '\n')
             embeddings.append(batch_embeddings)
-    embeddings_file='data/gpt_data/gender/uni_male_embeddings.txt'
     save_pk(embeddings_file)
     end_time = time.time()
     total_time = end_time - start_time
