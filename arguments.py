@@ -45,10 +45,6 @@ class OtherArguments:
         metadata={"help": "Bias type.",
         "choices": ["gender", "race","religion"]}
     )
-    data_file: str = field(
-        default="data/train_data/data.bin",
-        metadata={"help": "The input data file."}
-    )
     log_dir: str = field(
         default="log",
         metadata={"help": "The log directory where to save log file."}
@@ -65,7 +61,6 @@ class OtherArguments:
         default=0.7,
         metadata={"help": "Weight of Loss Function 2"}
     )
-
     block_size: int = field(
         default=128, 
         metadata={"help": "Optional input sequence length after tokenization."
