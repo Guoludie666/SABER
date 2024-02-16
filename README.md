@@ -41,7 +41,7 @@ You can run the following code directly to start training the model. The require
 Debias language models 
 ```
 python ck_debias.py
---debias_type    gender or race or religion
+--debias_type    gender
 --model_type   bert or roberta or albert
 --model_name_or_path  bert-base-uncased, etc
 --num_train_epochs 4
