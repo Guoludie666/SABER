@@ -40,7 +40,7 @@ class ModelArguments:
 
 @dataclass
 class OtherArguments:
-    bias: str = field(
+    debias_type: str = field(
         default="gender",
         metadata={"help": "Bias type.",
         "choices": ["gender", "race","religion"]}
@@ -83,7 +83,6 @@ def get_args():
     model_args, training_args, other_args = parser.parse_args_into_dataclasses()
     args = argparse.Namespace(**vars(training_args), **vars(other_args))
     args.model_name_or_path = model_args.model_name_or_path
-
     if (
         os.path.exists(args.output_dir)
         and os.listdir(args.output_dir)

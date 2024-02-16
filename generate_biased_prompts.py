@@ -1,10 +1,6 @@
-import time
-import os
 import argparse
 import torch
 import numpy as np
-from torch.utils.data import DataLoader
-import torch.nn as nn
 import torch.nn.functional as F
 from utils import *
 from transformers import BertTokenizer,BertForMaskedLM
@@ -13,8 +9,6 @@ from transformers import AlbertTokenizer,AlbertForMaskedLM
 import math
 import torch.nn.functional as F
 import pickle
-import tqdm
-import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -24,29 +18,24 @@ parser.add_argument(
     choices=['gender','race','religion'],
     help="Choose from ['gender','race','religion']",
 )
-
+parser.add_argument(
+    "--model_type",
+    default="bert",
+    type=str,
+    help="Choose from ['bert','albert','roberta',]",
+)
 parser.add_argument(
     "--model_name_or_path",
     default="bert-base-uncased",
     type=str,
     help="Path to pretrained model or model identifier from huggingface.co/models",
 )
-
-parser.add_argument(
-    "--model_type",
-    default="bert",
-    type=str,
-    help="Choose from ['bert','roberta','albert']",
-)
-
 parser.add_argument(
     "--BS",
     default=50,
     type=int,
     help="batch size of the data fed into the model",
 )
-
-
 parser.add_argument(
     "--K",
     default=0.55,
@@ -54,21 +43,18 @@ parser.add_argument(
     help="top K-ratio prompts to be selected",
 )
 
-
-
-def get_pairs():
+def get_pairs(debias_type):
     pairs=[]
     with open('data/train_data/one_mask/XNT_data.pk', 'rb') as file:
         XNT_data = pickle.load(file)
     keys = list(XNT_data.keys())
-    num_keys = len(keys)
     tar1_words=XNT_data[keys[0]]["sent"][:]
     tar2_words=XNT_data[keys[1]]["sent"][:]
     with open('data/train_data/one_mask/XNTmask_data.pk', 'rb') as file1:
         XNTmask_data = pickle.load(file1)
     tar1_maskwords=XNTmask_data[keys[0]]["sent"][:]
     tar2_maskwords=XNTmask_data[keys[1]]["sent"][:]
-    if num_keys==3:
+    if debias_type=='religion':
         tar3_words=XNT_data[keys[2]]["sent"][:]
         tar3_maskwords=XNTmask_data[keys[2]]["sent"][:]
     for index,line in enumerate(tar1_maskwords):
@@ -76,10 +62,10 @@ def get_pairs():
         line2=tar2_maskwords[index].strip()
         line1_=tar1_words[index].strip()
         line2_=tar2_words[index].strip()
-        if num_keys==3:
+        if debias_type=='religion':
             line3=tar3_maskwords[index].strip()
             line3_=tar3_words[index].strip()
-            pairs.append((line1,line2,line3,line1_,line2_,line3_))
+            pairs.append((line1,line2,line1_,line2_,line3,line3_))
         else:
             pairs.append((line1,line2,line1_,line2_))
     return pairs
@@ -90,21 +76,30 @@ def send_to_cuda(tar1_tokenized,tar2_tokenized):
         tar2_tokenized[key] = tar2_tokenized[key].cuda()
     return tar1_tokenized,tar2_tokenized
 
-#change
-def get_tokenized_ith_generate_prompt(tar1_words,tar2_words,tokenizer):
+def get_tokenized_ith_generate_prompt(tar1_words,tar2_words,tar3_words,tokenizer):
     tar1_sen=[]
     tar2_sen=[]
+    tar3_sen=[]
     for index,i in enumerate(tar1_words):
         tar1_sen.append(i)
         tar2_sen.append(tar2_words[index])
+        if tar3_words!=[]:
+            tar3_sen.append(tar3_words[index])
 
     tar1_tokenized = tokenizer(tar1_sen,padding=True, truncation=True, return_tensors="pt")
     tar2_tokenized = tokenizer(tar2_sen,padding=True, truncation=True, return_tensors="pt")
 
     tar1_mask_index = np.where(tar1_tokenized['input_ids'].numpy()==tokenizer.mask_token_id)[1]
     tar2_mask_index = np.where(tar2_tokenized['input_ids'].numpy()==tokenizer.mask_token_id)[1]
+    if tar3_words!=[]:
+        tar3_tokenized = tokenizer(tar3_sen,padding=True, truncation=True, return_tensors="pt")
+        tar3_mask_index = np.where(tar3_tokenized['input_ids'].numpy()==tokenizer.mask_token_id)[1]
+
     assert tar1_mask_index.shape[0]==tar1_tokenized['input_ids'].shape[0]
-    return tar1_tokenized,tar2_tokenized,tar1_mask_index,tar2_mask_index,tar1_sen
+    if tar3_words!=[]:
+        return tar1_tokenized,tar2_tokenized,tar3_tokenized,tar1_mask_index,tar2_mask_index,tar3_mask_index,tar1_sen
+    else:
+        return tar1_tokenized,tar2_tokenized,tar1_mask_index,tar2_mask_index,tar1_sen
 
 
 def run_model(model,inputs,mask_index,ster_words):
@@ -145,18 +140,27 @@ def get_JSD(tar1_tokenized,tar2_tokenized,tar1_mask_index,tar2_mask_index,model,
     return jsd_list 
 
 
-def get_prompt_jsd(tar1_words, tar2_words, model, ster_words):
+def get_prompt_jsd(tar1_words, tar2_words,tar3_words, model, ster_words):
     current_prompts=[]
     jsd_word_list = []
     assert len(tar1_words)==len(tar2_words)
-    tar1_tokenized,tar2_tokenized,tar1_mask_index,tar2_mask_index,tar1_sen= get_tokenized_ith_generate_prompt(tar1_words,tar2_words,tokenizer)
+    if tar3_words!=[]:
+        assert len(tar1_words)==len(tar2_words)==len(tar3_words)
+        tar1_tokenized,tar2_tokenized,tar3_tokenized,tar1_mask_index,tar2_mask_index,tar3_mask_index,tar1_sen=get_tokenized_ith_generate_prompt(tar1_words,tar2_words,tar3_words,tokenizer)
+    else:
+        tar1_tokenized,tar2_tokenized,tar1_mask_index,tar2_mask_index,tar1_sen= get_tokenized_ith_generate_prompt(tar1_words,tar2_words,tar3_words,tokenizer)
+
     print("tokenized input shape",tar1_tokenized['input_ids'].shape)        
     jsd_list = get_JSD(tar1_tokenized,tar2_tokenized, tar1_mask_index, tar2_mask_index, model, ster_words)
-    jsd_word_list.append(jsd_list)
+    if tar3_words!=[]:
+        jsd_list_ = get_JSD(tar1_tokenized,tar3_tokenized, tar1_mask_index, tar3_mask_index, model, ster_words)
+        for index in range(len(jsd_list)):
+            jsd_list[index]=jsd_list[index]+jsd_list_[index]
+    jsd_word_list.append(jsd_list)    
     current_prompts.extend(tar1_sen)
-    jsd_word_list = np.array(jsd_word_list)  
-    return current_prompts,np.mean(jsd_word_list, axis=0)         
-
+    jsd_word_list = np.array(jsd_word_list)
+    return current_prompts,np.mean(jsd_word_list, axis=0)  
+       
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -177,33 +181,46 @@ if __name__ == "__main__":
     
     jsd_model = JSD(reduction='none')
 
-    tar_pairs=get_pairs()
-    male_words=[]
-    female_words=[]
-    male_words_=[]
-    female_words_=[]
+    tar_pairs=get_pairs(args.debias_type)
+    
+    attribute0_words=[]
+    attribute1_words=[]
+    attribute2_words=[]
+    attribute0_words_=[]
+    attribute1_words_=[]
+    attribute2_words_=[]
     for i in tar_pairs:
-        male_words.append(i[0])
-        female_words.append(i[1])
-        male_words_.append(i[2])
-        female_words_.append(i[3])
+        attribute0_words.append(i[0])
+        attribute1_words.append(i[1])
+        attribute0_words_.append(i[2])
+        attribute1_words_.append(i[3])
+        if args.debias_type=='religion':
+            attribute2_words.append(i[4])
+            attribute2_words_.append(i[5])
 
     ster_words_ = clean_word_list(load_word_list("data/stereotype.txt"),tokenizer)
     ster_words = tokenizer.convert_tokens_to_ids(ster_words_)   #stereotype words   
 
     ff=open('data/train_data/bias_data/prompts_{}_{}'.format(args.model_name_or_path,args.debias_type),'w')
-    current_prompts,current_prompts_jsd = get_prompt_jsd(male_words, female_words, model,ster_words)
+    current_prompts,current_prompts_jsd = get_prompt_jsd(attribute0_words, attribute1_words, attribute2_words,model,ster_words)
     current_prompts=np.array(current_prompts)
     index_lists=np.argsort(current_prompts_jsd)[::-1][:math.ceil(args.K*len(current_prompts))]
-    tar_sen={"male":{"sent":[]},"female":{"sent":[]}}
-    tar_masksen={"male":{"sent":[]},"female":{"sent":[]}}
+    print(len(index_lists))
+    if args.debias_type=='religion':
+        tar_sen={"attribute0":{"sent":[]},"attribute1":{"sent":[]},"attribute2":{"sent":[]}}
+        tar_masksen={"attribute0":{"sent":[]},"attribute1":{"sent":[]},"attribute2":{"sent":[]}}
+    else:
+        tar_sen={"attribute0":{"sent":[]},"attribute1":{"sent":[]}}
+        tar_masksen={"attribute0":{"sent":[]},"attribute1":{"sent":[]}}
     top_k_prompts = np.array(current_prompts)[index_lists]
     for index in index_lists:
-
-        tar_masksen["male"]["sent"].append(male_words[index])
-        tar_masksen["female"]["sent"].append(female_words[index])
-        tar_sen["male"]["sent"].append(male_words_[index])
-        tar_sen["female"]["sent"].append(female_words_[index])
+        tar_masksen["attribute0"]["sent"].append(attribute0_words[index])
+        tar_masksen["attribute1"]["sent"].append(attribute1_words[index])
+        tar_sen["attribute0"]["sent"].append(attribute0_words_[index])
+        tar_sen["attribute1"]["sent"].append(attribute1_words_[index])
+        if args.debias_type=='religion':
+            tar_masksen["attribute2"]["sent"].append(attribute2_words[index])
+            tar_sen["attribute2"]["sent"].append(attribute2_words_[index])
     with open('data/train_data/bias_data/XNT_data.pk', 'wb') as f,open('data/train_data/bias_data/XNTmask_data.pk', 'wb') as f1:
         pickle.dump(tar_sen, f)
         pickle.dump(tar_masksen, f1)  

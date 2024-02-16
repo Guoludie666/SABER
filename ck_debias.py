@@ -14,14 +14,12 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset,Subset
 from tqdm import tqdm, trange
 from arguments import get_args
-from distance import  calculate_group_to_one_relative_distance_asymmetric, JS_divergence
+from distance import calculate_group_to_one_relative_distance_asymmetric, JS_divergence
 
 from transformers import (
     AdamW,
     AutoConfig,
-    AutoModelWithLMHead,
     AutoModelForPreTraining,
-    BertForPreTraining,
     AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizer,
@@ -64,7 +62,8 @@ def split_data(attributes_examples_, neutral_examples, args):
     attributes_examples=attributes_examples_['sent']
     attributes_examples_neighbor=attributes_examples_['neighbor_sent']    
     data={'train':{'example':{'attribute0':[],'attribute1':[],'weight':[],'neutral':[]}},'dev':{'example':{'attribute0':[],'attribute1':[],'weight':[]},'neutral':[]}}
- 
+    if args.debias_type=='religion':
+        data={'train':{'example':{'attribute0':[],'attribute1':[],'attribute2':[],'weight':[],'neutral':[]}},'dev':{'example':{'attribute0':[],'attribute1':[],'attribute2':[],'weight':[]},'neutral':[]}}
     for i, examples in enumerate(attributes_examples):
         idx_l = list(range(len(examples)))
         examples_neighbors=attributes_examples_neighbor[i]
@@ -99,7 +98,7 @@ def split_data(attributes_examples_, neutral_examples, args):
     data['dev']['example']['neutral'] = neutral_examples[train_data_size:]
     return data
 
-def split_data2(tar1_tokenized,tar2_tokenized,args):
+def split_data2(tar1_tokenized,tar2_tokenized,tar3_tokenized,args):
     data = {'train': {'example': {}}, 'dev': {'example': {}}}
     idx_l = list(range(len(tar1_tokenized)))
     tar1_tokenized_examples = [tar1_tokenized[idx] for idx in idx_l]
@@ -109,51 +108,78 @@ def split_data2(tar1_tokenized,tar2_tokenized,args):
     data['dev']['example']['token0'] = tar1_tokenized_examples[train_data_size:]
     data['train']['example']['token1'] = tar2_tokenized_examples[:train_data_size]
     data['dev']['example']['token1'] = tar2_tokenized_examples[train_data_size:]
+    if args.debias_type=='religion':
+        tar3_tokenized_examples = [tar3_tokenized[idx] for idx in idx_l]
+        data['train']['example']['token2'] = tar3_tokenized_examples[:train_data_size]
+        data['dev']['example']['token2'] = tar3_tokenized_examples[train_data_size:]
     return data
-def get_data1(datafile1,tokenizer):
+def get_data1(datafile1,tokenizer,debias_type):
     data={"attributes_examples":{"sent":[[],[]],"neighbor_sent":[[],[]]},"neutral_examples":[]}
+    if debias_type=='religion':
+        data={"attributes_examples":{"sent":[[],[],[]],"neighbor_sent":[[],[],[]]},"neutral_examples":[]}
     with open(datafile1, 'rb') as file:
-        XNT_data = pickle.load(file)
-        for index,l in tqdm(enumerate(XNT_data['male']['sent'][:])):
+        XT_data = pickle.load(file)
+        for index,l in tqdm(enumerate(XT_data['attribute0']['sent'][:])):
             orig_line=l.strip()
             embed=tokenizer.encode(orig_line, add_special_tokens=True)
             data["attributes_examples"]["sent"][0].append(embed)
             neighbor_embeds=[]
-            for j,neighbor in enumerate(XNT_data['male']['neighbor_sent'][index]):
+            for j,neighbor in enumerate(XT_data['attribute0']['neighbor_sent'][index]):
                 if neighbor!=None:
                     neighbor=neighbor.strip()
                     neighbor_embed=tokenizer.encode(neighbor,add_special_tokens=True)
                     neighbor_embeds.append(neighbor_embed)
             data["attributes_examples"]["neighbor_sent"][0].append(neighbor_embeds)   
             data["neutral_examples"].append(embed)
-        for index,l_ in tqdm(enumerate(XNT_data['female']['sent'][:])):
+        for index,l_ in tqdm(enumerate(XT_data['attribute1']['sent'][:])):
             orig_line_=l_.strip()
             embed_=tokenizer.encode(orig_line_, add_special_tokens=True)
             data["attributes_examples"]["sent"][1].append(embed_)
             neighbor_embeds=[]
-            for neighbor in XNT_data['female']['neighbor_sent'][index]:
+            for neighbor in XT_data['attribute1']['neighbor_sent'][index]:
                 if neighbor!=None:
                     neighbor=neighbor.strip()
                     neighbor_embed=tokenizer.encode(neighbor,add_special_tokens=True)
                     neighbor_embeds.append(neighbor_embed)
             data["attributes_examples"]["neighbor_sent"][1].append(neighbor_embeds)
             data["neutral_examples"].append(embed_)
+        if debias_type=='religion':
+            for index,l__ in tqdm(enumerate(XT_data['attribute2']['sent'][:])):
+                orig_line__=l__.strip()
+                embed__=tokenizer.encode(orig_line__, add_special_tokens=True)
+                data["attributes_examples"]["sent"][2].append(embed__)
+                neighbor_embeds=[]
+                for neighbor in XT_data['attribute2']['neighbor_sent'][index]:
+                    if neighbor!=None:
+                        neighbor=neighbor.strip()
+                        neighbor_embed=tokenizer.encode(neighbor,add_special_tokens=True)
+                        neighbor_embeds.append(neighbor_embed)
+                data["attributes_examples"]["neighbor_sent"][2].append(neighbor_embeds)
+                data["neutral_examples"].append(embed__)
     return data
 
-def get_data2(datafile2,tokenizer):
+def get_data2(datafile2,tokenizer,debias_type):
     data={"token0":[],"token1":[]}
+    if debias_type=='religion':
+        data={"token0":[],"token1":[],'token2':[]}
     with open(datafile2, 'rb') as file:
-        XT_data = pickle.load(file)
-        for l in tqdm(XT_data['male']['sent'][:]):
+        XNT_data = pickle.load(file)
+        for l in tqdm(XNT_data['attribute0']['sent'][:]):
             orig_line=l.strip()
             assert orig_line.count("[MASK]")==1,orig_line
             embed=tokenizer.encode(orig_line, add_special_tokens=True)
             data["token0"].append(embed)
-        for l_ in tqdm(XT_data['female']['sent'][:]):
+        for l_ in tqdm(XNT_data['attribute1']['sent'][:]):
             orig_line_=l_.strip()
             assert orig_line_.count("[MASK]")==1,orig_line_
             embed_=tokenizer.encode(orig_line_, add_special_tokens=True)
             data["token1"].append(embed_)
+        if debias_type=='religion':
+            for l__ in tqdm(XNT_data['attribute2']['sent'][:]):
+                orig_line__=l__.strip()
+                assert orig_line__.count("[MASK]")==1,orig_line__
+                embed__=tokenizer.encode(orig_line__, add_special_tokens=True)
+                data["token2"].append(embed__)
     return data
 
 def set_seed(args):
@@ -189,7 +215,6 @@ def create_dataloader(args, datasets, tokenizer, train=False):
         non_pad_indices = torch.where(padded_examples != tokenizer.pad_token_id)
         # Set token_type_ids to 1 at non-pad indices
         token_type_ids[non_pad_indices] = 1
-
         return padded_examples,token_type_ids,examples_attention_mask,examples_mask_index
 
     dataloaders = {}
@@ -202,39 +227,25 @@ def create_dataloader(args, datasets, tokenizer, train=False):
     assert len(datasets['token0'])==len(datasets['token1'])
 
     shuffle_order1 = torch.randperm(len(datasets['attribute0']))
-    shuffle_order2 =  torch.randperm(len(datasets['token0']))
-    shuffle_order3 =  torch.randperm(len(datasets['neutral']))
+    shuffle_order2 = torch.randperm(len(datasets['token0']))
+    shuffle_order3 = torch.randperm(len(datasets['neutral']))
+
     for key, dataset in datasets.items():
-        if key=='token0':
-            shuffle_order=shuffle_order2
-            train_batch_size=train_batch_size_['token0']
-            eval_batch_size=eval_batch_size_['token0']
-            min_size=len(datasets['token0'])
-        elif key=='token1':
-            shuffle_order=shuffle_order2
-            train_batch_size=train_batch_size_['token0']
-            eval_batch_size=eval_batch_size_['token0']
-            min_size=len(datasets['token0'])
-        elif key=='weight':
-            shuffle_order=shuffle_order1
-            train_batch_size=train_batch_size_['attribute0']
-            eval_batch_size=eval_batch_size_['attribute0']
-            min_size=len(datasets['attribute0'])
-        elif key=='attribute0':
-            shuffle_order=shuffle_order1
-            train_batch_size=train_batch_size_['attribute0']
-            eval_batch_size=eval_batch_size_['attribute0']
-            min_size=len(datasets['attribute0'])
-        elif key=='attribute1':
-            shuffle_order=shuffle_order1
-            train_batch_size=train_batch_size_['attribute0']
-            eval_batch_size=eval_batch_size_['attribute0']
-            min_size=len(datasets['attribute0'])
-        elif key=='neutral':
-            shuffle_order=shuffle_order3
-            train_batch_size=train_batch_size_['attribute0']
-            eval_batch_size=eval_batch_size_['attribute0']
-            min_size=len(datasets['neutral'])
+        if key in ['token0', 'token1','token2']:
+            shuffle_order = shuffle_order2
+            train_batch_size = train_batch_size_['token0']
+            eval_batch_size = eval_batch_size_['token0']
+            min_size = len(datasets['token0'])
+        elif key in ['weight','attribute0','attribute1','attribute2']:
+            shuffle_order = shuffle_order1
+            train_batch_size = train_batch_size_['attribute0']
+            eval_batch_size = eval_batch_size_['attribute0']
+            min_size = len(datasets['attribute0'])
+        elif key == 'neutral':
+            shuffle_order = shuffle_order3
+            train_batch_size = train_batch_size_['attribute0']
+            eval_batch_size = eval_batch_size_['attribute0']
+            min_size = len(datasets['neutral'])
 
         example_num += len(dataset)
         dataset=Subset(dataset, shuffle_order)
@@ -303,7 +314,8 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
         # Load in optimizer and scheduler states
         optimizer.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "optimizer.pt")))
         scheduler.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "scheduler.pt")))
-
+    #paired sentences
+    train_example_num=train_example_num//2
     if args.fp16:
         try:
             from apex import amp
@@ -401,17 +413,17 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
             hiddens =model.albert(input).hidden_states
         return hiddens
     
-    def attribute_vector_example():
-        if args.bias == 'gender' or args.bias == 'race':
+    def attribute_vector_example(args):
+        if args.debias_type == 'gender' or args.debias_type == 'race':
             d = 2
-        elif args.bias == 'religion':
+        elif args.debias_type == 'religion':
             d = 3
         attributes_hiddens = {f'attribute{i}': [] for i in range(d)}
         weights=[]
 
         dataloaders, _, distribution = create_dataloader(args, train_datasets, tokenizer, train=True)
         for key in distribution:
-            if key == 'attribute0' or key=='attribute1':
+            if key == 'attribute0' or key=='attribute1' or key=='attribute2':
                 inputs,token_type_ids,inputs_attention_mask,inputs_mask_ids= next(dataloaders[key])
                 inputs = inputs.to(args.device)
                 inputs_attention_mask = inputs_attention_mask.to(args.device)
@@ -433,30 +445,13 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
         return attributes_hiddens
 
 
-    def forward(attributes_hiddens,dataloaders,data_key):
+    def forward(attributes_hiddens,dataloaders,data_key,args):
         loss = 0
-        if 'token0'==data_key:
-            tar_predictions_logits={"token0":[],"token1":[]}
-            for key in ['token0','token1']:
-                inputs,token_type_ids,inputs_attention_mask,inputs_mask_id= next(dataloaders[key])
-                is_empty = (inputs_mask_id.flatten().shape[0] == 0)
-                assert is_empty==False,key
-                inputs = inputs.to(args.device)
-                token_type_ids=token_type_ids.long()
-                token_type_ids=token_type_ids.to(args.device)
-                inputs_attention_mask = inputs_attention_mask.to(args.device)
-                inputs_ = {
-                        'input_ids': inputs,
-                        'token_type_ids':token_type_ids,
-                        'attention_mask': inputs_attention_mask
-                            }
-                tar_predictions = model(**inputs_)
-                tar_predictions_logits[key] = tar_predictions.prediction_logits[torch.arange(tar_predictions.prediction_logits.size(0)), inputs_mask_id]
-            tar1_predictions_logits,tar2_predictions_logits=tar_predictions_logits["token0"],tar_predictions_logits["token1"]
-            loss = jsd_model(tar1_predictions_logits,tar2_predictions_logits)
-            loss=loss*args.beta
-   
-        elif 'neutral'==data_key:
+        if args.debias_type=='religion':
+            d=3
+        else:
+            d=2   
+        if 'neutral'==data_key:
             inputs = next(dataloaders["neutral"])
             inputs,token_type_ids, inputs_attention_mask,inputs_mask_ids = inputs
             inputs = inputs.to(args.device)
@@ -475,7 +470,6 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
                 attributes_hiddens = {key: value[:,idx,:].unsqueeze(1) for key, value in attributes_hiddens.items()}
             if args.loss_target == 'sentence':
                 attributes_hiddens = {key: value.unsqueeze(1) for key, value in attributes_hiddens.items()}
-            #elif args.loss_target == 'token' and key == 'neutral':
             elif args.loss_target == 'token':
                 target_layer_hiddens = torch.mean(target_layer_hiddens, 1).unsqueeze(1)
   
@@ -487,6 +481,30 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
                     loss += JS_divergence(relative_distance[i], relative_distance[j])
             loss /= relative_distance_shape0 * (relative_distance_shape0 - 1) / 2
             loss=loss*args.alpha
+        elif 'token0'==data_key:
+            tar_predictions_logits = {f'token{i}': [] for i in range(d)}
+            for key in [f'token{i}' for i in range(d)]:
+                inputs,token_type_ids,inputs_attention_mask,inputs_mask_id= next(dataloaders[key])
+                is_empty = (inputs_mask_id.flatten().shape[0] == 0)
+                assert is_empty==False,key
+                inputs = inputs.to(args.device)
+                token_type_ids=token_type_ids.long()
+                token_type_ids=token_type_ids.to(args.device)
+                inputs_attention_mask = inputs_attention_mask.to(args.device)
+                inputs_ = {
+                        'input_ids': inputs,
+                        'token_type_ids':token_type_ids,
+                        'attention_mask': inputs_attention_mask
+                            }
+                tar_predictions = model(**inputs_)
+                tar_predictions_logits[key] = tar_predictions.prediction_logits[torch.arange(tar_predictions.prediction_logits.size(0)), inputs_mask_id]
+            tar1_predictions_logits,tar2_predictions_logits=tar_predictions_logits["token0"],tar_predictions_logits["token1"]
+            loss = jsd_model(tar1_predictions_logits,tar2_predictions_logits)
+            if d==3:
+                tar3_predictions_logits=tar_predictions_logits["token2"]
+                loss = loss+jsd_model(tar1_predictions_logits,tar3_predictions_logits)
+            loss=loss*args.beta
+
         else:
             inputs = next(dataloaders[data_key])
             inputs,token_type_ids, inputs_attention_mask,inputs_mask_ids = inputs
@@ -524,7 +542,7 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
             if data_key=='token1':
                 continue
             with torch.no_grad():
-                loss = forward(attributes_hiddens, dev_dataloaders,data_key)
+                loss = forward(attributes_hiddens, dev_dataloaders,data_key,args)
                 eval_loss += loss.item()
                 model.zero_grad()
         return eval_loss
@@ -541,7 +559,7 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
 
         model.eval()
         with torch.no_grad():
-            attributes_hiddens= attribute_vector_example()
+            attributes_hiddens= attribute_vector_example(args)
 
         for step, data_key in enumerate(epoch_iterator):
             if data_key=="weight":
@@ -554,7 +572,7 @@ def train(args, data, datasets, model: PreTrainedModel,original_model,tokenizer:
                 steps_trained_in_current_epoch -= 1
                 continue
 
-            loss = forward(attributes_hiddens,train_dataloaders,data_key)
+            loss = forward(attributes_hiddens,train_dataloaders,data_key,args)
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
             if args.gradient_accumulation_steps > 1:
@@ -649,8 +667,6 @@ def main():
         )
 
     config.output_hidden_states = 'true'
-
-
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir)
     elif model_args.model_name_or_path:
@@ -677,7 +693,6 @@ def main():
     else:
         raise ValueError()
         
-
     # GPT-2 and GPT do not have pad.
     if tokenizer._pad_token is None:
         tokenizer.add_special_tokens({'pad_token': '<pad>'})
@@ -691,16 +706,20 @@ def main():
         torch.distributed.barrier()  # End of barrier to make sure only the first process in distributed training download model & vocab
 
     logger.info("Training/evaluation parameters %s", args)
-
-    data=get_data1('data/train_data/XT_data.pk',tokenizer)
+    
+    data=get_data1('data/train_data/XT_data.pk',tokenizer,args.debias_type)
     attributes_examples = data['attributes_examples']
     neutral_examples = data['neutral_examples']
     splited_data = split_data(attributes_examples, neutral_examples, args)
 
-    data2=get_data2("data/train_data/bias_data/XNTmask_data.pk",tokenizer)
+    data2=get_data2("data/train_data/bias_data/XNTmask_data.pk",tokenizer,args.debias_type)
     tar1_tokenized=data2["token0"]
     tar2_tokenized=data2["token1"]
-    splited_data2 = split_data2(tar1_tokenized,tar2_tokenized,args)
+    if args.debias_type=='religion':
+        tar3_tokenized=data2["token2"]
+    else:
+        tar3_tokenized=[]
+    splited_data2 = split_data2(tar1_tokenized,tar2_tokenized,tar3_tokenized,args)
 
     datasets1 = fload_and_cache_examples(splited_data, args, tokenizer)
     datasets2 = fload_and_cache_examples(splited_data2, args, tokenizer)
@@ -723,6 +742,11 @@ def main():
         "token1": datasets2["dev"]["token1"],
     }
     }
+    if args.debias_type=='religion':
+        datasets['train']['attribute2']=datasets1["train"]["attribute2"]
+        datasets['train']['token2']=datasets2["train"]["token2"]
+        datasets['dev']['attribute2']=datasets1["dev"]["attribute2"]
+        datasets['dev']['token2']=datasets2["dev"]["token2"]
 
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()  # Barrier to make sure only the first process in distributed training process the dataset, and the others will use the cache

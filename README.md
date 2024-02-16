@@ -35,6 +35,17 @@ model = AutoModelForPreTraining.from_pretrained(args.model_name_or_path)
 
 We've already included word lists for attributes in the `./data` folder, so there is no need to acquire them from other resources. As for larger corpora, The corpus extracted from GPT is placed in the `./data/gpt_data` directory.
 
+## Quick Start
+
+You can run the following code directly to start training the model. The required training data is properly placed, and there is no need to preprocess the data.
+Debias language models 
+```
+python ck_debias.py
+--debias_type    gender or race or religion
+--model_type   bert or roberta or albert
+--model_name_or_path  bert-base-uncased, etc
+--num_train_epochs 4
+```
 
 ## Experiments
 
@@ -63,5 +74,6 @@ python ck_debias.py
 --debias_type    gender or race or religion
 --model_type   bert or roberta or albert
 --model_name_or_path  bert-base-uncased, etc
+--num_train_epochs 4
 ```
 
