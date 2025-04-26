@@ -1,4 +1,4 @@
-# CK-Debias: Absorbing Commonsense Knowledge from LLMs for Improving Social Fairness in Pre-trained Language Models 
+# SABER
 
 
 ## Environment Setup
@@ -13,7 +13,7 @@ Install pytorch and python packages:
 
 ```bash
 conda install -n pt2 pytorch==1.7.1 torchvision==0.8.2 torchaudio==0.7.2 cudatoolkit=11.0 -c pytorch
-cd CK-Debias
+cd SABER
 pip install -r requirements.txt
 ```
 
@@ -75,7 +75,7 @@ python generate_biased_prompts.py \
 ```
 Debias language models 
 ```
-python ck_debias.py
+python saber.py
 --debias_type    gender or race or religion
 --model_type   bert or roberta or albert
 --model_name_or_path  bert-base-uncased, etc
