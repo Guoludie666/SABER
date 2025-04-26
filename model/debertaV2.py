@@ -1,3 +1,4 @@
+# Updated: April 26, 2025
 # coding=utf-8
 # Copyright 2020 Microsoft and the Hugging Face Inc. team.
 #
@@ -1338,13 +1339,13 @@ class DebertaV2ForSequenceClassification(DebertaV2PreTrainedModel):
         if not return_dict:
             output = (logits,) + outputs[1:]
             return ((loss,) + output) if loss is not None else output
-        else:
-            return SequenceClassifierOutput(
-                loss=loss,
-                logits=logits,
-                hidden_states=outputs.hidden_states,
-                attentions=outputs.attentions,
-            )
+
+        return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
 
 
 # @add_start_docstrings(
